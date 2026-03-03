@@ -98,7 +98,6 @@
     <!-- Экран звонка -->
     <div id="call-screen" class="screen hidden">
         <div class="call-layout">
-            <!-- Основная область с участниками -->
             <div class="main-area">
                 <div class="room-header">
                     <div class="room-info">
@@ -122,8 +121,14 @@
                     </div>
                 </div>
 
+                <!-- Контейнер с видео для демонстрации экрана -->
+                <div id="screen-share-container" class="screen-share-container hidden">
+                    <video id="remote-screen-video" autoplay playsinline></video>
+                    <button id="stop-screen-share" class="stop-screen-btn">Остановить демонстрацию</button>
+                </div>
+
                 <!-- Контейнер с участниками -->
-                <div class="participants-grid">
+                <div class="participants-grid" id="participants-grid">
                     <!-- Локальный участник (вы) -->
                     <div class="participant-tile" id="local-participant-tile">
                         <div class="participant-avatar-large" id="local-avatar-large">A</div>
@@ -132,6 +137,20 @@
                             <span class="participant-badge">(вы)</span>
                         </div>
                         <div class="voice-indicator" id="local-voice-indicator"></div>
+                        <div class="mute-icon" id="local-mute-icon">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="3" y1="3" x2="21" y2="21"></line>
+                                <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"></path>
+                                <line x1="3" y1="11" x2="21" y2="11"></line>
+                            </svg>
+                        </div>
+                        <div class="screen-share-icon" id="local-screen-icon">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+                                <line x1="8" y1="21" x2="16" y2="21"></line>
+                                <line x1="12" y1="17" x2="12" y2="21"></line>
+                            </svg>
+                        </div>
                     </div>
 
                     <!-- Удаленный участник (друг) -->
@@ -141,6 +160,20 @@
                             <span class="participant-name" id="remote-name-display">Ожидание...</span>
                         </div>
                         <div class="voice-indicator" id="remote-voice-indicator"></div>
+                        <div class="mute-icon" id="remote-mute-icon">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="3" y1="3" x2="21" y2="21"></line>
+                                <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"></path>
+                                <line x1="3" y1="11" x2="21" y2="11"></line>
+                            </svg>
+                        </div>
+                        <div class="screen-share-icon" id="remote-screen-icon">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+                                <line x1="8" y1="21" x2="16" y2="21"></line>
+                                <line x1="12" y1="17" x2="12" y2="21"></line>
+                            </svg>
+                        </div>
                     </div>
                 </div>
 
@@ -154,6 +187,14 @@
                             </svg>
                         </button>
                         
+                        <button id="toggle-screen-share" class="control-btn" title="Демонстрация экрана">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+                                <line x1="8" y1="21" x2="16" y2="21"></line>
+                                <line x1="12" y1="17" x2="12" y2="21"></line>
+                            </svg>
+                        </button>
+                        
                         <button id="leave-call" class="control-btn leave" title="Завершить звонок">
                             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.362 1.903.7 2.81a2 2 0 0 1-.45 2.11L8 10a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.574 2.81.7A2 2 0 0 1 22 16.92z"/>
@@ -162,6 +203,17 @@
                     </div>
                 </div>
             </div>
+        </div>
+    </div>
+
+    <!-- Контекстное меню -->
+    <div id="context-menu" class="context-menu hidden">
+        <div class="context-menu-header">
+            <span class="context-menu-title">Громкость собеседника</span>
+        </div>
+        <div class="context-menu-content">
+            <input type="range" id="volume-slider" class="volume-slider" min="0" max="100" value="100">
+            <span class="volume-value" id="volume-value">100%</span>
         </div>
     </div>
 

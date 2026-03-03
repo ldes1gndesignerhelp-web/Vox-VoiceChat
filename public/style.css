@@ -20,6 +20,7 @@
     --border-light: #2f333a;
     --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.4);
     --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
+    --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.6);
     --radius-sm: 6px;
     --radius-md: 8px;
     --radius-lg: 12px;
@@ -310,17 +311,49 @@ body, html {
     background: var(--accent-success);
 }
 
-.status-dot.connected {
-    background: var(--accent-success);
+/* Контейнер для демонстрации экрана */
+.screen-share-container {
+    position: relative;
+    width: 100%;
+    margin-bottom: 2rem;
+    border-radius: 12px;
+    overflow: hidden;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
 }
 
-/* Сетка участников - Discord стиль */
+.screen-share-container video {
+    width: 100%;
+    max-height: 300px;
+    object-fit: contain;
+    background: var(--bg-primary);
+}
+
+.stop-screen-btn {
+    position: absolute;
+    bottom: 1rem;
+    right: 1rem;
+    padding: 0.5rem 1rem;
+    background: var(--accent-danger);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    z-index: 10;
+}
+
+.stop-screen-btn:hover {
+    background: #e11d48;
+}
+
+/* Сетка участников */
 .participants-grid {
     flex: 1;
     display: grid;
     grid-template-columns: repeat(2, 1fr);
     gap: 2rem;
-    padding: 2rem;
+    padding: 1rem;
     min-height: 0;
 }
 
@@ -328,7 +361,7 @@ body, html {
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
     border-radius: 16px;
-    padding: 3rem 2rem;
+    padding: 2rem;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -338,7 +371,51 @@ body, html {
     transition: border-color 0.15s;
 }
 
-/* Индикатор разговора как в Discord */
+.participant-tile.speaking {
+    border-color: var(--accent-success);
+}
+
+.participant-tile.muted .participant-avatar-large {
+    opacity: 0.5;
+}
+
+/* Иконки */
+.mute-icon, .screen-share-icon {
+    position: absolute;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--accent-danger);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    opacity: 0;
+    transition: opacity 0.15s;
+    z-index: 2;
+}
+
+.mute-icon {
+    top: 1rem;
+    left: 1rem;
+}
+
+.screen-share-icon {
+    top: 1rem;
+    right: 1rem;
+    background: var(--accent-primary);
+}
+
+.participant-tile.muted .mute-icon {
+    opacity: 1;
+}
+
+.participant-tile.screen-sharing .screen-share-icon {
+    opacity: 1;
+    animation: pulse 2s infinite;
+}
+
+/* Индикатор разговора */
 .voice-indicator {
     position: absolute;
     top: 1rem;
@@ -348,6 +425,7 @@ body, html {
     border-radius: 50%;
     background: var(--text-muted);
     transition: background-color 0.15s;
+    z-index: 1;
 }
 
 .participant-tile.speaking .voice-indicator {
@@ -355,7 +433,11 @@ body, html {
     box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.2);
 }
 
-/* Большая аватарка с первой буквой */
+.participant-tile.muted .voice-indicator {
+    background: var(--accent-danger);
+}
+
+/* Аватар */
 .participant-avatar-large {
     width: 120px;
     height: 120px;
@@ -368,7 +450,8 @@ body, html {
     font-size: 3.5rem;
     font-weight: 600;
     color: var(--text-primary);
-    transition: border-color 0.15s;
+    transition: border-color 0.15s, opacity 0.15s;
+    z-index: 1;
 }
 
 .participant-tile.speaking .participant-avatar-large {
@@ -378,6 +461,7 @@ body, html {
 /* Имя участника */
 .participant-name-tag {
     text-align: center;
+    z-index: 1;
 }
 
 .participant-name {
@@ -393,7 +477,7 @@ body, html {
     color: var(--text-muted);
 }
 
-/* Состояние ожидания для удаленного участника */
+/* Состояние ожидания */
 .remote-tile.waiting {
     opacity: 0.7;
 }
@@ -435,6 +519,7 @@ body, html {
     align-items: center;
     justify-content: center;
     border: 1px solid var(--border-color);
+    transition: all 0.15s;
 }
 
 .control-btn:hover {
@@ -449,10 +534,13 @@ body, html {
     background: var(--accent-danger);
     color: white;
     border-color: var(--accent-danger);
+    animation: pulse 2s infinite;
 }
 
-.control-btn.audio-off svg {
-    stroke: white;
+.control-btn.screen-sharing {
+    background: var(--accent-primary);
+    color: white;
+    border-color: var(--accent-primary);
 }
 
 .control-btn.leave {
@@ -465,6 +553,70 @@ body, html {
     background: #e11d48;
 }
 
+/* Контекстное меню */
+.context-menu {
+    position: fixed;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 1rem;
+    min-width: 200px;
+    box-shadow: var(--shadow-lg);
+    z-index: 1000;
+}
+
+.context-menu.hidden {
+    display: none;
+}
+
+.context-menu-header {
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid var(--border-color);
+    margin-bottom: 0.75rem;
+}
+
+.context-menu-title {
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.context-menu-content {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.volume-slider {
+    flex: 1;
+    height: 4px;
+    -webkit-appearance: none;
+    background: var(--bg-tertiary);
+    border-radius: 2px;
+    outline: none;
+}
+
+.volume-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--accent-primary);
+    cursor: pointer;
+    border: 2px solid var(--bg-secondary);
+    box-shadow: var(--shadow-sm);
+}
+
+.volume-value {
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    font-weight: 500;
+    min-width: 45px;
+    text-align: right;
+}
+
 /* Уведомления */
 .notification {
     position: fixed;
@@ -474,7 +626,7 @@ body, html {
     border-left: 4px solid var(--accent-primary);
     padding: 1rem 1.5rem;
     border-radius: 8px;
-    box-shadow: var(--shadow-md);
+    box-shadow: var(--shadow-lg);
     border: 1px solid var(--border-color);
     z-index: 1000;
 }
@@ -487,23 +639,17 @@ body, html {
     border-left-color: var(--accent-success);
 }
 
-/* Скроллбар */
-::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
-}
-
-::-webkit-scrollbar-track {
-    background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
-    background: var(--border-color);
-    border-radius: 3px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-    background: var(--border-light);
+/* Анимации */
+@keyframes pulse {
+    0% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.8;
+    }
+    100% {
+        opacity: 1;
+    }
 }
 
 /* Адаптивность */
@@ -549,28 +695,4 @@ body, html {
     .auth-container {
         padding: 1.5rem;
     }
-}
-
-/* Добавьте в конец файла */
-
-.error-message {
-    color: var(--accent-danger);
-    font-size: 0.9rem;
-    margin-top: 1rem;
-    padding: 0.5rem;
-    border: 1px solid var(--accent-danger);
-    border-radius: 8px;
-    background: rgba(244, 63, 94, 0.1);
-    text-align: center;
-}
-
-.error-message.hidden {
-    display: none;
-}
-
-/* Стили для индикатора копирования */
-.icon-button.copied {
-    background: var(--accent-success);
-    color: white;
-    border-color: var(--accent-success);
 }
