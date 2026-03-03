@@ -14,14 +14,13 @@ const io = socketIo(server, {
 });
 
 // Хранилище активных комнат и пользователей
-const rooms = new Map(); // roomId -> { users: Map(userId -> userData) }
+const rooms = new Map();
 
 app.use(express.static(path.join(__dirname, 'public')));
 
 io.on('connection', (socket) => {
-    console.log('✅ Новый пользователь подключился:', socket.id);
+    console.log('✅ Новый пользователь:', socket.id);
 
-    // Создание новой комнаты
     socket.on('create-room', ({ username }) => {
         const roomId = uuidv4().substring(0, 6).toUpperCase();
         
@@ -33,24 +32,18 @@ io.on('connection', (socket) => {
         const userData = {
             id: socket.id,
             username: username,
-            joinedAt: Date.now(),
             isSpeaking: false,
-            isScreenSharing: false,
-            connectionStatus: 'connected'
+            isDeafened: false,
+            isScreenSharing: false
         };
         
         rooms.get(roomId).users.set(socket.id, userData);
         socket.join(roomId);
         
-        socket.emit('room-created', { 
-            roomId, 
-            user: userData 
-        });
-        
-        console.log(`✅ Комната ${roomId} создана пользователем ${username}`);
+        socket.emit('room-created', { roomId, user: userData });
+        console.log(`✅ Комната ${roomId} создана`);
     });
 
-    // Подключение к существующей комнате
     socket.on('join-room', ({ roomId, username }) => {
         const normalizedRoomId = roomId.toUpperCase().trim();
         
@@ -65,39 +58,27 @@ io.on('connection', (socket) => {
             const userData = {
                 id: socket.id,
                 username: username,
-                joinedAt: Date.now(),
                 isSpeaking: false,
-                isScreenSharing: false,
-                connectionStatus: 'connected'
+                isDeafened: false,
+                isScreenSharing: false
             };
             
             room.users.set(socket.id, userData);
             socket.join(normalizedRoomId);
             
             const users = Array.from(room.users.values());
-            socket.emit('room-joined', { 
-                roomId: normalizedRoomId, 
-                users,
-                user: userData
-            });
+            socket.emit('room-joined', { roomId: normalizedRoomId, users, user: userData });
+            socket.to(normalizedRoomId).emit('user-connected', { user: userData });
             
-            socket.to(normalizedRoomId).emit('user-connected', { 
-                user: userData 
-            });
-            
-            console.log(`✅ Пользователь ${username} присоединился к комнате ${normalizedRoomId}`);
+            console.log(`✅ ${username} присоединился к ${normalizedRoomId}`);
         } else {
             socket.emit('room-not-found');
         }
     });
 
-    // Обработка статуса разговора
     socket.on('speaking-status', ({ isSpeaking }) => {
         rooms.forEach((room, roomId) => {
             if (room.users.has(socket.id)) {
-                const userData = room.users.get(socket.id);
-                userData.isSpeaking = isSpeaking;
-                
                 io.to(roomId).emit('user-speaking', {
                     userId: socket.id,
                     isSpeaking: isSpeaking
@@ -106,64 +87,27 @@ io.on('connection', (socket) => {
         });
     });
 
-    // Обработка статуса демонстрации экрана
-    socket.on('screen-sharing-status', ({ isSharing }) => {
-        rooms.forEach((room, roomId) => {
-            if (room.users.has(socket.id)) {
-                const userData = room.users.get(socket.id);
-                userData.isScreenSharing = isSharing;
-                
-                io.to(roomId).emit('user-screen-sharing', {
-                    userId: socket.id,
-                    isSharing: isSharing
-                });
-            }
-        });
+    socket.on('voice-offer', ({ to, offer }) => {
+        io.to(to).emit('voice-offer', { from: socket.id, offer });
     });
 
-    // Обработка WebRTC сигналов для аудио
-    socket.on('offer', ({ to, offer }) => {
-        io.to(to).emit('offer', { 
-            from: socket.id, 
-            offer,
-            type: 'audio'
-        });
+    socket.on('voice-answer', ({ to, answer }) => {
+        io.to(to).emit('voice-answer', { from: socket.id, answer });
     });
 
-    socket.on('answer', ({ to, answer }) => {
-        io.to(to).emit('answer', { 
-            from: socket.id, 
-            answer,
-            type: 'audio'
-        });
-    });
-
-    // Обработка WebRTC сигналов для экрана
     socket.on('screen-offer', ({ to, offer }) => {
-        io.to(to).emit('screen-offer', { 
-            from: socket.id, 
-            offer 
-        });
+        io.to(to).emit('screen-offer', { from: socket.id, offer });
     });
 
     socket.on('screen-answer', ({ to, answer }) => {
-        io.to(to).emit('screen-answer', { 
-            from: socket.id, 
-            answer 
-        });
+        io.to(to).emit('screen-answer', { from: socket.id, answer });
     });
 
     socket.on('ice-candidate', ({ to, candidate }) => {
-        io.to(to).emit('ice-candidate', { 
-            from: socket.id, 
-            candidate 
-        });
+        io.to(to).emit('ice-candidate', { from: socket.id, candidate });
     });
 
-    // Отключение пользователя
     socket.on('disconnect', () => {
-        console.log('❌ Пользователь отключился:', socket.id);
-        
         rooms.forEach((room, roomId) => {
             if (room.users.has(socket.id)) {
                 const userData = room.users.get(socket.id);
@@ -176,7 +120,6 @@ io.on('connection', (socket) => {
                 
                 if (room.users.size === 0) {
                     rooms.delete(roomId);
-                    console.log(`🗑️ Комната ${roomId} удалена`);
                 }
             }
         });
@@ -185,5 +128,5 @@ io.on('connection', (socket) => {
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Сервер запущен на порту ${PORT}`);
+    console.log(`🚀 Сервер на порту ${PORT}`);
 });

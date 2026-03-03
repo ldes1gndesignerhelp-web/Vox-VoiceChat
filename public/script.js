@@ -1,931 +1,552 @@
 const socket = io();
-
-// Код доступа
 const ACCESS_CODE = 'hg-100UIRockaGaY';
 
-let localStream;
-let screenStream;
-let peerConnections = {};
-let screenPeerConnections = {};
+// Состояние приложения
+let localStream = null;
+let screenStream = null;
 let currentRoom = null;
 let currentUser = null;
-let isAudioEnabled = true;
+let currentUsername = '';
+let isMuted = false;
+let isDeafened = false;
 let isScreenSharing = false;
-let audioContext = null;
-let analyser = null;
-let microphone = null;
-let animationFrame = null;
-let speakingTimeout = null;
-let remoteAudioElements = {};
-let remoteVolumes = {};
-let remoteConnectionStatus = 'disconnected';
-let connectionCheckInterval = null;
+
+// WebRTC соединения
+let voicePeerConnection = null;
+let screenPeerConnection = null;
+let remoteAudioElement = null;
 
 // DOM элементы
-const accessScreen = document.getElementById('access-screen');
-const joinScreen = document.getElementById('join-screen');
+const authScreen = document.getElementById('auth-screen');
+const lobbyScreen = document.getElementById('lobby-screen');
 const callScreen = document.getElementById('call-screen');
-const accessCodeInput = document.getElementById('access-code-input');
-const submitAccessBtn = document.getElementById('submit-access-btn');
-const accessError = document.getElementById('access-error');
-const usernameInput = document.getElementById('username-input');
-const createRoomBtn = document.getElementById('create-room-btn');
-const joinRoomBtn = document.getElementById('join-room-btn');
-const roomIdInput = document.getElementById('room-id-input');
-const roomIdDisplay = document.getElementById('room-id-display');
-const copyRoomBtn = document.getElementById('copy-room-btn');
-const toggleAudioBtn = document.getElementById('toggle-audio');
-const toggleScreenShareBtn = document.getElementById('toggle-screen-share');
-const leaveCallBtn = document.getElementById('leave-call');
-const notification = document.getElementById('notification');
-const notificationMessage = document.getElementById('notification-message');
-const connectionStatus = document.getElementById('connection-status');
-const mainArea = document.querySelector('.main-area');
-
-// Элементы для участников
-const localTile = document.getElementById('local-participant-tile');
-const remoteTile = document.getElementById('remote-participant-tile');
-const localAvatarLarge = document.getElementById('local-avatar-large');
-const remoteAvatarLarge = document.getElementById('remote-avatar-large');
-const localNameDisplay = document.getElementById('local-name-display');
-const remoteNameDisplay = document.getElementById('remote-name-display');
-const remoteConnectionStatusText = document.getElementById('remote-connection-status');
-const localMuteIcon = document.getElementById('local-mute-icon');
-const remoteMuteIcon = document.getElementById('remote-mute-icon');
-const localScreenIcon = document.getElementById('local-screen-icon');
-const remoteScreenIcon = document.getElementById('remote-screen-icon');
-const localConnection = document.getElementById('local-connection');
-const remoteConnection = document.getElementById('remote-connection');
-
-// Элементы для демонстрации экрана
-const screenShareContainer = document.getElementById('screen-share-container');
-const remoteScreenVideo = document.getElementById('remote-screen-video');
-const stopScreenShareBtn = document.getElementById('stop-screen-share');
+const accessCode = document.getElementById('access-code');
+const submitAccess = document.getElementById('submit-access');
+const authError = document.getElementById('auth-error');
+const logoutBtn = document.getElementById('logout-btn');
+const lobbyUsername = document.getElementById('lobby-username');
+const lobbyAvatar = document.getElementById('lobby-avatar');
+const lobbyCreate = document.getElementById('lobby-create');
+const lobbyJoin = document.getElementById('lobby-join');
+const lobbyRoomCode = document.getElementById('lobby-room-code');
+const membersList = document.getElementById('members-list');
+const voiceGrid = document.getElementById('voice-grid');
+const currentUserAvatar = document.getElementById('current-user-avatar');
+const currentUserName = document.getElementById('current-user-name');
+const callRoomCode = document.getElementById('call-room-code');
+const copyRoomCode = document.getElementById('copy-room-code');
+const muteToggle = document.getElementById('mute-toggle');
+const deafenToggle = document.getElementById('deafen-toggle');
+const screenShareToggle = document.getElementById('screen-share-toggle');
+const leaveCall = document.getElementById('leave-call');
+const screenShareArea = document.getElementById('screen-share-area');
+const screenVideo = document.getElementById('screen-video');
 const fullscreenBtn = document.getElementById('fullscreen-screen');
+const stopScreenShare = document.getElementById('stop-screen-share');
+const connectionStatus = document.getElementById('connection-status');
+const volumeContext = document.getElementById('volume-context');
+const userVolume = document.getElementById('user-volume');
+const volumePercent = document.getElementById('volume-percent');
+const notification = document.getElementById('notification');
 
-// Элементы контекстного меню
-const contextMenu = document.getElementById('context-menu');
-const volumeSlider = document.getElementById('volume-slider');
-const volumeValue = document.getElementById('volume-value');
-
-let currentTargetUserId = null;
-
-// Конфигурация STUN серверов
-const configuration = {
+// Конфигурация STUN
+const config = {
     iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' }
     ]
 };
 
-// Проверка сохраненного доступа
-document.addEventListener('DOMContentLoaded', () => {
-    const hasAccess = localStorage.getItem('vox_access') === 'granted';
-    
-    if (hasAccess) {
-        accessScreen.classList.add('hidden');
-        joinScreen.classList.remove('hidden');
-    } else {
-        accessScreen.classList.remove('hidden');
-        joinScreen.classList.add('hidden');
-    }
-    
-    callScreen.classList.add('hidden');
-    
-    createRoomBtn.disabled = true;
-    joinRoomBtn.disabled = true;
-    
-    usernameInput.value = '';
-    roomIdInput.value = '';
-    accessCodeInput.value = '';
-    
-    document.addEventListener('click', (e) => {
-        if (!contextMenu.contains(e.target)) {
-            contextMenu.classList.add('hidden');
-        }
-    });
-});
-
-// Ввод кода доступа
-accessCodeInput.addEventListener('keypress', (e) => {
-    if (e.key === 'Enter') {
-        submitAccessBtn.click();
-    }
-});
-
-submitAccessBtn.addEventListener('click', () => {
-    const code = accessCodeInput.value.trim();
-    
-    if (code === ACCESS_CODE) {
-        localStorage.setItem('vox_access', 'granted');
-        accessScreen.classList.add('hidden');
-        joinScreen.classList.remove('hidden');
-        accessError.classList.add('hidden');
-        accessCodeInput.value = '';
-        showNotification('Доступ разрешен', 'success');
-    } else {
-        accessError.textContent = 'Неверный код доступа';
-        accessError.classList.remove('hidden');
-        accessCodeInput.value = '';
-    }
-});
-
-// Валидация ввода
-usernameInput.addEventListener('input', () => {
-    const username = usernameInput.value.trim();
-    const hasUsername = username.length > 0;
-    createRoomBtn.disabled = !hasUsername;
-    
-    const hasRoomId = roomIdInput.value.trim().length > 0;
-    joinRoomBtn.disabled = !hasUsername || !hasRoomId;
-});
-
-roomIdInput.addEventListener('input', () => {
-    const username = usernameInput.value.trim();
-    const hasRoomId = roomIdInput.value.trim().length > 0;
-    const hasUsername = username.length > 0;
-    
-    joinRoomBtn.disabled = !hasRoomId || !hasUsername;
-    roomIdInput.value = roomIdInput.value.toUpperCase();
-});
-
-usernameInput.addEventListener('keypress', (e) => {
-    if (e.key === 'Enter' && !createRoomBtn.disabled) {
-        createRoomBtn.click();
-    }
-});
-
-roomIdInput.addEventListener('keypress', (e) => {
-    if (e.key === 'Enter' && !joinRoomBtn.disabled) {
-        joinRoomBtn.click();
-    }
-});
-
-// Утилиты
-function showNotification(message, type = 'info') {
-    notificationMessage.textContent = message;
-    notification.className = `notification ${type}`;
+// ========== УТИЛИТЫ ==========
+function showNotif(msg, type = 'info') {
+    notification.textContent = msg;
+    notification.style.borderLeftColor = 
+        type === 'success' ? '#23a55a' : 
+        type === 'error' ? '#f23f42' : '#5865f2';
     notification.classList.remove('hidden');
-    
-    setTimeout(() => {
-        notification.classList.add('hidden');
-    }, 3000);
+    setTimeout(() => notification.classList.add('hidden'), 3000);
 }
 
-function getInitials(username) {
-    return username ? username.charAt(0).toUpperCase() : '?';
+function getInitials(name) {
+    return name ? name.charAt(0).toUpperCase() : 'U';
 }
 
-// Обновление статуса подключения
-function updateRemoteConnectionStatus(status) {
-    remoteConnectionStatus = status;
-    
-    const connectionDot = remoteConnection.querySelector('.connection-dot');
-    connectionDot.className = 'connection-dot';
-    
-    switch(status) {
-        case 'connected':
-            connectionDot.classList.add('connected');
-            remoteConnectionStatusText.textContent = 'В сети';
-            break;
-        case 'connecting':
-            connectionDot.classList.add('connecting');
-            remoteConnectionStatusText.textContent = 'Подключение...';
-            break;
-        case 'disconnected':
-            connectionDot.classList.add('disconnected');
-            remoteConnectionStatusText.textContent = 'Не в сети';
-            break;
-    }
+// ========== УПРАВЛЕНИЕ ДОСТУПОМ ==========
+if (localStorage.getItem('vox_access') === 'granted') {
+    authScreen.classList.add('hidden');
+    lobbyScreen.classList.remove('hidden');
 }
 
-// Обновление статусов
-function updateSpeakingStatus(userId, isSpeaking) {
-    if (userId === socket.id) {
-        if (isSpeaking && isAudioEnabled) {
-            localTile.classList.add('speaking');
-        } else {
-            localTile.classList.remove('speaking');
-        }
+submitAccess.addEventListener('click', () => {
+    if (accessCode.value === ACCESS_CODE) {
+        localStorage.setItem('vox_access', 'granted');
+        authScreen.classList.add('hidden');
+        lobbyScreen.classList.remove('hidden');
+        showNotif('Доступ разрешен', 'success');
     } else {
-        if (isSpeaking) {
-            remoteTile.classList.add('speaking');
-        } else {
-            remoteTile.classList.remove('speaking');
-        }
+        authError.classList.remove('hidden');
     }
-}
+});
 
-function updateMuteStatus(userId, isMuted) {
-    if (userId === socket.id) {
-        if (isMuted) {
-            localTile.classList.add('muted');
-        } else {
-            localTile.classList.remove('muted');
-        }
-    } else {
-        if (isMuted) {
-            remoteTile.classList.add('muted');
-        } else {
-            remoteTile.classList.remove('muted');
-        }
+accessCode.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') submitAccess.click();
+});
+
+logoutBtn.addEventListener('click', () => {
+    localStorage.removeItem('vox_access');
+    lobbyScreen.classList.add('hidden');
+    authScreen.classList.remove('hidden');
+    accessCode.value = '';
+});
+
+// ========== ЛОББИ ==========
+lobbyUsername.addEventListener('input', () => {
+    const val = lobbyUsername.value.trim();
+    lobbyAvatar.textContent = getInitials(val);
+    lobbyCreate.disabled = !val;
+    lobbyJoin.disabled = !val || !lobbyRoomCode.value.trim();
+});
+
+lobbyRoomCode.addEventListener('input', () => {
+    lobbyRoomCode.value = lobbyRoomCode.value.toUpperCase();
+    lobbyJoin.disabled = !lobbyUsername.value.trim() || !lobbyRoomCode.value.trim();
+});
+
+lobbyCreate.addEventListener('click', async () => {
+    currentUsername = lobbyUsername.value.trim();
+    const success = await initMicrophone();
+    if (success) {
+        socket.emit('create-room', { username: currentUsername });
     }
-}
+});
 
-function updateScreenShareStatus(userId, isSharing) {
-    if (userId === socket.id) {
-        if (isSharing) {
-            localTile.classList.add('screen-sharing');
-            toggleScreenShareBtn.classList.add('screen-sharing');
-        } else {
-            localTile.classList.remove('screen-sharing');
-            toggleScreenShareBtn.classList.remove('screen-sharing');
-        }
-    } else {
-        if (isSharing) {
-            remoteTile.classList.add('screen-sharing');
-            mainArea.classList.add('screen-sharing-active');
-        } else {
-            remoteTile.classList.remove('screen-sharing');
-            if (!isScreenSharing) {
-                mainArea.classList.remove('screen-sharing-active');
-            }
-        }
+lobbyJoin.addEventListener('click', async () => {
+    currentUsername = lobbyUsername.value.trim();
+    const roomCode = lobbyRoomCode.value.trim();
+    const success = await initMicrophone();
+    if (success) {
+        socket.emit('join-room', { roomId: roomCode, username: currentUsername });
+        updateConnectionStatus('connecting');
     }
-}
+});
 
-// Анализатор голоса
-function setupVoiceActivityDetection(stream) {
-    try {
-        if (!audioContext) {
-            audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        }
-        
-        analyser = audioContext.createAnalyser();
-        analyser.fftSize = 256;
-        analyser.smoothingTimeConstant = 0.5;
-        
-        microphone = audioContext.createMediaStreamSource(stream);
-        microphone.connect(analyser);
-        
-        const bufferLength = analyser.frequencyBinCount;
-        const dataArray = new Uint8Array(bufferLength);
-        
-        let isSpeaking = false;
-        
-        function detectSpeaking() {
-            if (!analyser) return;
-            
-            analyser.getByteFrequencyData(dataArray);
-            
-            let sum = 0;
-            for (let i = 0; i < bufferLength; i++) {
-                sum += dataArray[i];
-            }
-            const average = sum / bufferLength;
-            
-            const threshold = 20;
-            const currentlySpeaking = average > threshold && isAudioEnabled;
-            
-            if (currentlySpeaking !== isSpeaking) {
-                isSpeaking = currentlySpeaking;
-                
-                if (isSpeaking) {
-                    socket.emit('speaking-status', { isSpeaking: true });
-                    updateSpeakingStatus(socket.id, true);
-                    
-                    if (speakingTimeout) {
-                        clearTimeout(speakingTimeout);
-                        speakingTimeout = null;
-                    }
-                } else {
-                    if (speakingTimeout) {
-                        clearTimeout(speakingTimeout);
-                    }
-                    
-                    speakingTimeout = setTimeout(() => {
-                        socket.emit('speaking-status', { isSpeaking: false });
-                        updateSpeakingStatus(socket.id, false);
-                        speakingTimeout = null;
-                    }, 200);
-                }
-            }
-            
-            animationFrame = requestAnimationFrame(detectSpeaking);
-        }
-        
-        detectSpeaking();
-        return true;
-    } catch (error) {
-        console.error('Ошибка настройки аудио анализатора:', error);
-        return false;
-    }
-}
-
-// Получение доступа к микрофону
-async function getLocalStream() {
+// ========== МИКРОФОН ==========
+async function initMicrophone() {
     try {
         localStream = await navigator.mediaDevices.getUserMedia({ 
             audio: {
                 echoCancellation: true,
                 noiseSuppression: true,
                 autoGainControl: true
-            },
-            video: false
+            }
         });
-        
-        console.log('✅ Микрофон получен');
-        showNotification('Микрофон работает', 'success');
-        
         return true;
-    } catch (error) {
-        console.error('❌ Ошибка доступа к микрофону:', error);
-        showNotification('Не удалось получить доступ к микрофону', 'error');
+    } catch (err) {
+        showNotif('Нет доступа к микрофону', 'error');
         return false;
     }
 }
 
-// Демонстрация экрана
-async function startScreenShare() {
-    try {
-        screenStream = await navigator.mediaDevices.getDisplayMedia({ 
-            video: {
-                cursor: "always",
-                displaySurface: "monitor"
-            },
-            audio: false
-        });
+// ========== СОЗДАНИЕ ПИТОВ ==========
+function createVoicePeer(targetId, isInitiator) {
+    if (voicePeerConnection) voicePeerConnection.close();
+    
+    const pc = new RTCPeerConnection(config);
+    voicePeerConnection = pc;
+    
+    localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+    
+    pc.ontrack = (e) => {
+        if (remoteAudioElement) remoteAudioElement.remove();
+        remoteAudioElement = document.createElement('audio');
+        remoteAudioElement.srcObject = e.streams[0];
+        remoteAudioElement.autoplay = true;
+        remoteAudioElement.volume = userVolume.value / 100;
+        document.body.appendChild(remoteAudioElement);
+        updateConnectionStatus('connected');
+    };
+    
+    pc.onicecandidate = (e) => {
+        if (e.candidate) {
+            socket.emit('ice-candidate', { to: targetId, candidate: e.candidate });
+        }
+    };
+    
+    pc.onconnectionstatechange = () => {
+        if (pc.connectionState === 'connected') updateConnectionStatus('connected');
+        if (pc.connectionState === 'disconnected') updateConnectionStatus('offline');
+    };
+    
+    if (isInitiator) {
+        pc.createOffer()
+            .then(offer => pc.setLocalDescription(offer))
+            .then(() => {
+                socket.emit('voice-offer', { to: targetId, offer: pc.localDescription });
+            });
+    }
+    
+    return pc;
+}
+
+function createScreenPeer(targetId, isInitiator) {
+    if (!screenStream) return;
+    if (screenPeerConnection) screenPeerConnection.close();
+    
+    const pc = new RTCPeerConnection(config);
+    screenPeerConnection = pc;
+    
+    screenStream.getTracks().forEach(track => pc.addTrack(track, screenStream));
+    
+    pc.ontrack = (e) => {
+        screenVideo.srcObject = e.streams[0];
+        screenShareArea.classList.remove('hidden');
+    };
+    
+    pc.onicecandidate = (e) => {
+        if (e.candidate) {
+            socket.emit('ice-candidate', { to: targetId, candidate: e.candidate });
+        }
+    };
+    
+    if (isInitiator) {
+        pc.createOffer()
+            .then(offer => pc.setLocalDescription(offer))
+            .then(() => {
+                socket.emit('screen-offer', { to: targetId, offer: pc.localDescription });
+            });
+    }
+    
+    return pc;
+}
+
+// ========== ОБНОВЛЕНИЕ ИНТЕРФЕЙСА ==========
+function updateMembers(users) {
+    membersList.innerHTML = '';
+    voiceGrid.innerHTML = '';
+    
+    users.forEach(user => {
+        const isMe = user.id === socket.id;
         
-        isScreenSharing = true;
-        socket.emit('screen-sharing-status', { isSharing: true });
-        updateScreenShareStatus(socket.id, true);
+        // В списке участников
+        const memberEl = document.createElement('div');
+        memberEl.className = 'member-item';
+        memberEl.id = `member-${user.id}`;
+        memberEl.innerHTML = `
+            <div class="member-avatar ${user.isSpeaking ? 'speaking' : ''}">
+                ${getInitials(user.username)}
+                <div class="voice-state ${user.isDeafened ? 'deafened' : (user.id === socket.id ? (isMuted ? 'muted' : '') : '')}"></div>
+            </div>
+            <div class="member-info">
+                <div class="member-name">
+                    ${user.username}
+                    ${isMe ? '<span class="member-badge">(вы)</span>' : ''}
+                </div>
+                <div class="member-status">${user.isSpeaking ? '🎤 Говорит' : 'В сети'}</div>
+            </div>
+        `;
         
-        // Создаем отдельное peer connection для экрана
-        const remoteUserId = Object.keys(peerConnections)[0];
-        if (remoteUserId) {
-            updateRemoteConnectionStatus('connecting');
-            createScreenPeerConnection(remoteUserId, true);
+        if (!isMe) {
+            memberEl.addEventListener('contextmenu', (e) => {
+                e.preventDefault();
+                volumeContext.classList.remove('hidden');
+                volumeContext.style.left = e.pageX + 'px';
+                volumeContext.style.top = e.pageY + 'px';
+            });
         }
         
-        screenStream.getVideoTracks()[0].onended = () => {
-            stopScreenShare();
-        };
+        membersList.appendChild(memberEl);
         
-        showNotification('Демонстрация экрана начата', 'success');
-    } catch (error) {
-        console.error('Ошибка демонстрации экрана:', error);
-        showNotification('Не удалось начать демонстрацию экрана', 'error');
+        // В сетке с аватарками
+        const tileEl = document.createElement('div');
+        tileEl.className = `voice-tile ${user.isSpeaking ? 'speaking' : ''}`;
+        tileEl.id = `tile-${user.id}`;
+        tileEl.innerHTML = `
+            <div class="tile-avatar">${getInitials(user.username)}</div>
+            <div class="tile-name">${user.username}</div>
+            <div class="tile-status">${user.isSpeaking ? '🎤' : '🔊'}</div>
+            <div class="tile-badge"></div>
+        `;
+        voiceGrid.appendChild(tileEl);
+    });
+}
+
+function updateSpeakingStatus(userId, speaking) {
+    const member = document.getElementById(`member-${userId}`);
+    const tile = document.getElementById(`tile-${userId}`);
+    
+    if (member) {
+        const avatar = member.querySelector('.member-avatar');
+        if (speaking) avatar.classList.add('speaking');
+        else avatar.classList.remove('speaking');
+    }
+    
+    if (tile) {
+        if (speaking) tile.classList.add('speaking');
+        else tile.classList.remove('speaking');
     }
 }
 
-function stopScreenShare() {
+function updateConnectionStatus(status) {
+    const dot = connectionStatus.querySelector('.status-dot');
+    dot.className = 'status-dot';
+    
+    if (status === 'connected') {
+        dot.classList.add('online');
+        connectionStatus.querySelector('span').textContent = 'Подключено';
+    } else if (status === 'connecting') {
+        dot.classList.add('connecting');
+        connectionStatus.querySelector('span').textContent = 'Подключается...';
+    } else {
+        dot.classList.add('offline');
+        connectionStatus.querySelector('span').textContent = 'Отключено';
+    }
+}
+
+// ========== СОБЫТИЯ ИНТЕРФЕЙСА ==========
+muteToggle.addEventListener('click', () => {
+    if (!localStream) return;
+    isMuted = !isMuted;
+    localStream.getAudioTracks()[0].enabled = !isMuted;
+    
+    if (isMuted) {
+        muteToggle.classList.add('muted');
+        muteToggle.innerHTML = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="3" y1="3" x2="21" y2="21"/><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><line x1="3" y1="11" x2="21" y2="11"/></svg>`;
+        socket.emit('speaking-status', { isSpeaking: false });
+    } else {
+        muteToggle.classList.remove('muted');
+        muteToggle.innerHTML = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><line x1="3" y1="11" x2="21" y2="11"/></svg>`;
+    }
+});
+
+deafenToggle.addEventListener('click', () => {
+    isDeafened = !isDeafened;
+    if (remoteAudioElement) {
+        remoteAudioElement.muted = isDeafened;
+    }
+    
+    if (isDeafened) {
+        deafenToggle.classList.add('deafened');
+    } else {
+        deafenToggle.classList.remove('deafened');
+    }
+});
+
+screenShareToggle.addEventListener('click', async () => {
+    if (isScreenSharing) {
+        stopScreenSharing();
+    } else {
+        try {
+            screenStream = await navigator.mediaDevices.getDisplayMedia({
+                video: true,
+                audio: false
+            });
+            
+            isScreenSharing = true;
+            screenShareToggle.classList.add('screen-sharing');
+            
+            const remoteId = Object.keys(peerConnections || {})[0];
+            if (remoteId) {
+                createScreenPeer(remoteId, true);
+            }
+            
+            screenStream.getTracks()[0].onended = stopScreenSharing;
+            showNotif('Демонстрация начата', 'success');
+            
+        } catch (err) {
+            showNotif('Не удалось начать демонстрацию', 'error');
+        }
+    }
+});
+
+function stopScreenSharing() {
     if (screenStream) {
-        screenStream.getTracks().forEach(track => track.stop());
+        screenStream.getTracks().forEach(t => t.stop());
         screenStream = null;
+    }
+    
+    if (screenPeerConnection) {
+        screenPeerConnection.close();
+        screenPeerConnection = null;
     }
     
     isScreenSharing = false;
+    screenShareToggle.classList.remove('screen-sharing');
+    screenShareArea.classList.add('hidden');
     socket.emit('screen-sharing-status', { isSharing: false });
-    updateScreenShareStatus(socket.id, false);
-    
-    // Закрываем screen peer connections
-    Object.values(screenPeerConnections).forEach(pc => pc.close());
-    screenPeerConnections = {};
-    
-    if (!remoteTile.classList.contains('screen-sharing')) {
-        mainArea.classList.remove('screen-sharing-active');
-    }
-    
-    showNotification('Демонстрация экрана остановлена', 'info');
 }
-
-function createScreenPeerConnection(targetUserId, isInitiator) {
-    if (screenPeerConnections[targetUserId]) return;
-    
-    const peerConnection = new RTCPeerConnection(configuration);
-    screenPeerConnections[targetUserId] = peerConnection;
-    
-    if (screenStream) {
-        screenStream.getTracks().forEach(track => {
-            peerConnection.addTrack(track, screenStream);
-        });
-    }
-    
-    peerConnection.onicecandidate = (event) => {
-        if (event.candidate) {
-            socket.emit('ice-candidate', {
-                to: targetUserId,
-                candidate: event.candidate
-            });
-        }
-    };
-    
-    peerConnection.ontrack = (event) => {
-        console.log('✅ Получен удаленный экран');
-        remoteScreenVideo.srcObject = event.streams[0];
-        screenShareContainer.classList.remove('hidden');
-        updateRemoteConnectionStatus('connected');
-        
-        remoteScreenVideo.onclick = () => {
-            if (screenShareContainer.requestFullscreen) {
-                screenShareContainer.requestFullscreen();
-            }
-        };
-    };
-    
-    peerConnection.onconnectionstatechange = () => {
-        console.log('Screen connection state:', peerConnection.connectionState);
-        if (peerConnection.connectionState === 'connected') {
-            updateRemoteConnectionStatus('connected');
-        } else if (peerConnection.connectionState === 'connecting') {
-            updateRemoteConnectionStatus('connecting');
-        } else if (peerConnection.connectionState === 'disconnected' || 
-                   peerConnection.connectionState === 'failed') {
-            updateRemoteConnectionStatus('disconnected');
-        }
-    };
-    
-    if (isInitiator) {
-        peerConnection.createOffer()
-            .then(offer => peerConnection.setLocalDescription(offer))
-            .then(() => {
-                socket.emit('screen-offer', {
-                    to: targetUserId,
-                    offer: peerConnection.localDescription
-                });
-            })
-            .catch(error => console.error('Ошибка создания screen offer:', error));
-    }
-    
-    return peerConnection;
-}
-
-// Аудио элементы
-function createRemoteAudioElement(userId) {
-    if (remoteAudioElements[userId]) {
-        remoteAudioElements[userId].remove();
-    }
-    
-    const audio = document.createElement('audio');
-    audio.id = `remote-audio-${userId}`;
-    audio.autoplay = true;
-    audio.playsInline = true;
-    audio.style.display = 'none';
-    audio.volume = remoteVolumes[userId] || 1;
-    
-    document.body.appendChild(audio);
-    remoteAudioElements[userId] = audio;
-    
-    return audio;
-}
-
-function setRemoteVolume(userId, volume) {
-    remoteVolumes[userId] = volume;
-    if (remoteAudioElements[userId]) {
-        remoteAudioElements[userId].volume = volume;
-    }
-}
-
-// Peer connection для аудио
-function createPeerConnection(targetUserId, isInitiator) {
-    if (peerConnections[targetUserId]) return peerConnections[targetUserId];
-
-    const peerConnection = new RTCPeerConnection(configuration);
-    peerConnections[targetUserId] = peerConnection;
-
-    if (localStream) {
-        localStream.getTracks().forEach(track => {
-            peerConnection.addTrack(track, localStream);
-        });
-    }
-
-    peerConnection.onicecandidate = (event) => {
-        if (event.candidate) {
-            socket.emit('ice-candidate', {
-                to: targetUserId,
-                candidate: event.candidate
-            });
-        }
-    };
-
-    peerConnection.ontrack = (event) => {
-        console.log('✅ Получен удаленный аудио поток');
-        const audioElement = createRemoteAudioElement(targetUserId);
-        
-        if (audioElement) {
-            audioElement.srcObject = event.streams[0];
-            audioElement.play().catch(e => console.log('Автовоспроизведение заблокировано:', e));
-        }
-    };
-    
-    peerConnection.onconnectionstatechange = () => {
-        console.log('Audio connection state:', peerConnection.connectionState);
-        if (peerConnection.connectionState === 'connected') {
-            updateRemoteConnectionStatus('connected');
-        } else if (peerConnection.connectionState === 'connecting') {
-            updateRemoteConnectionStatus('connecting');
-        } else if (peerConnection.connectionState === 'disconnected' || 
-                   peerConnection.connectionState === 'failed') {
-            updateRemoteConnectionStatus('disconnected');
-        }
-    };
-
-    if (isInitiator) {
-        peerConnection.createOffer()
-            .then(offer => peerConnection.setLocalDescription(offer))
-            .then(() => {
-                socket.emit('offer', {
-                    to: targetUserId,
-                    offer: peerConnection.localDescription
-                });
-            })
-            .catch(error => console.error('Ошибка создания offer:', error));
-    }
-
-    return peerConnection;
-}
-
-// Обработчики событий
-createRoomBtn.addEventListener('click', async () => {
-    const username = usernameInput.value.trim();
-    if (!username) {
-        showNotification('Введите ваше имя', 'error');
-        return;
-    }
-    
-    const hasAudio = await getLocalStream();
-    if (hasAudio) {
-        socket.emit('create-room', { username });
-        showNotification('Создание комнаты...', 'info');
-    }
-});
-
-joinRoomBtn.addEventListener('click', async () => {
-    const username = usernameInput.value.trim();
-    const roomId = roomIdInput.value.trim().toUpperCase();
-    
-    if (!username) {
-        showNotification('Введите ваше имя', 'error');
-        return;
-    }
-    
-    if (!roomId) {
-        showNotification('Введите код комнаты', 'error');
-        return;
-    }
-    
-    const hasAudio = await getLocalStream();
-    if (hasAudio) {
-        socket.emit('join-room', { roomId, username });
-        showNotification('Подключение к комнате...', 'info');
-        updateRemoteConnectionStatus('connecting');
-    }
-});
-
-toggleAudioBtn.addEventListener('click', () => {
-    if (localStream) {
-        const audioTrack = localStream.getAudioTracks()[0];
-        if (audioTrack) {
-            isAudioEnabled = !isAudioEnabled;
-            audioTrack.enabled = isAudioEnabled;
-            
-            if (isAudioEnabled) {
-                toggleAudioBtn.classList.remove('audio-off');
-                toggleAudioBtn.classList.add('audio-on');
-                toggleAudioBtn.title = 'Отключить микрофон';
-                updateMuteStatus(socket.id, false);
-            } else {
-                toggleAudioBtn.classList.remove('audio-on');
-                toggleAudioBtn.classList.add('audio-off');
-                toggleAudioBtn.title = 'Включить микрофон';
-                updateMuteStatus(socket.id, true);
-                
-                socket.emit('speaking-status', { isSpeaking: false });
-                updateSpeakingStatus(socket.id, false);
-            }
-            
-            showNotification(
-                isAudioEnabled ? 'Микрофон включен' : 'Микрофон отключен',
-                'info'
-            );
-        }
-    }
-});
-
-toggleScreenShareBtn.addEventListener('click', () => {
-    if (isScreenSharing) {
-        stopScreenShare();
-    } else {
-        startScreenShare();
-    }
-});
-
-stopScreenShareBtn.addEventListener('click', stopScreenShare);
 
 fullscreenBtn.addEventListener('click', () => {
-    if (screenShareContainer.requestFullscreen) {
-        screenShareContainer.requestFullscreen();
-        screenShareContainer.classList.add('fullscreen');
+    if (screenShareArea.requestFullscreen) {
+        screenShareArea.requestFullscreen();
     }
 });
 
-document.addEventListener('fullscreenchange', () => {
-    if (!document.fullscreenElement) {
-        screenShareContainer.classList.remove('fullscreen');
-    }
+stopScreenShare.addEventListener('click', stopScreenSharing);
+
+copyRoomCode.addEventListener('click', () => {
+    navigator.clipboard.writeText(callRoomCode.textContent);
+    showNotif('Код скопирован', 'success');
 });
 
-copyRoomBtn.addEventListener('click', () => {
-    navigator.clipboard.writeText(currentRoom);
-    copyRoomBtn.classList.add('copied');
-    showNotification('Код скопирован', 'success');
-    setTimeout(() => {
-        copyRoomBtn.classList.remove('copied');
-    }, 1000);
-});
-
-leaveCallBtn.addEventListener('click', () => {
-    if (animationFrame) {
-        cancelAnimationFrame(animationFrame);
-        animationFrame = null;
-    }
+leaveCall.addEventListener('click', () => {
+    // Очистка соединений
+    if (voicePeerConnection) voicePeerConnection.close();
+    if (screenPeerConnection) screenPeerConnection.close();
+    if (localStream) localStream.getTracks().forEach(t => t.stop());
+    if (screenStream) screenStream.getTracks().forEach(t => t.stop());
+    if (remoteAudioElement) remoteAudioElement.remove();
     
-    if (speakingTimeout) {
-        clearTimeout(speakingTimeout);
-        speakingTimeout = null;
-    }
-    
-    if (audioContext) {
-        audioContext.close();
-        audioContext = null;
-    }
-    
-    if (screenStream) {
-        screenStream.getTracks().forEach(track => track.stop());
-        screenStream = null;
-    }
-    
-    Object.values(peerConnections).forEach(pc => pc.close());
-    Object.values(screenPeerConnections).forEach(pc => pc.close());
-    peerConnections = {};
-    screenPeerConnections = {};
-    
-    Object.values(remoteAudioElements).forEach(audio => {
-        if (audio) audio.remove();
-    });
-    remoteAudioElements = {};
-    remoteVolumes = {};
-    
-    if (localStream) {
-        localStream.getTracks().forEach(track => track.stop());
-        localStream = null;
-    }
-    
-    remoteNameDisplay.textContent = 'Ожидание...';
-    remoteAvatarLarge.textContent = '?';
-    remoteTile.classList.remove('speaking', 'waiting', 'screen-sharing', 'muted');
-    remoteTile.classList.add('waiting');
-    localTile.classList.remove('speaking', 'muted', 'screen-sharing');
-    
-    mainArea.classList.remove('screen-sharing-active');
-    screenShareContainer.classList.add('hidden');
-    remoteScreenVideo.srcObject = null;
-    
-    toggleAudioBtn.classList.remove('audio-off');
-    toggleAudioBtn.classList.add('audio-on');
-    toggleScreenShareBtn.classList.remove('screen-sharing');
-    
-    updateRemoteConnectionStatus('disconnected');
+    voicePeerConnection = null;
+    screenPeerConnection = null;
+    localStream = null;
+    screenStream = null;
+    remoteAudioElement = null;
     
     callScreen.classList.add('hidden');
-    joinScreen.classList.remove('hidden');
-    
-    showNotification('Звонок завершен', 'info');
-    roomIdInput.value = '';
+    lobbyScreen.classList.remove('hidden');
+    screenShareArea.classList.add('hidden');
 });
 
-// Контекстное меню
-remoteTile.addEventListener('contextmenu', (e) => {
-    e.preventDefault();
-    
-    if (remoteNameDisplay.textContent === 'Ожидание...') {
-        return;
-    }
-    
-    const remoteUserId = Object.keys(peerConnections)[0];
-    if (!remoteUserId) return;
-    
-    currentTargetUserId = remoteUserId;
-    
-    const currentVolume = remoteVolumes[remoteUserId] || 1;
-    volumeSlider.value = currentVolume * 100;
-    volumeValue.textContent = Math.round(currentVolume * 100) + '%';
-    
-    contextMenu.style.left = e.pageX + 'px';
-    contextMenu.style.top = e.pageY + 'px';
-    contextMenu.classList.remove('hidden');
-});
-
-volumeSlider.addEventListener('input', (e) => {
-    const volume = e.target.value / 100;
-    volumeValue.textContent = e.target.value + '%';
-    
-    if (currentTargetUserId) {
-        setRemoteVolume(currentTargetUserId, volume);
+userVolume.addEventListener('input', (e) => {
+    volumePercent.textContent = e.target.value + '%';
+    if (remoteAudioElement) {
+        remoteAudioElement.volume = e.target.value / 100;
     }
 });
 
-// Socket events
+document.addEventListener('click', () => {
+    volumeContext.classList.add('hidden');
+});
+
+// ========== СОКЕТ СОБЫТИЯ ==========
 socket.on('room-created', ({ roomId, user }) => {
     currentRoom = roomId;
     currentUser = user;
     
-    roomIdDisplay.textContent = roomId;
-    localNameDisplay.textContent = user.username;
-    localAvatarLarge.textContent = getInitials(user.username);
+    callRoomCode.textContent = roomId;
+    currentUserAvatar.textContent = getInitials(user.username);
+    currentUserName.textContent = user.username;
     
-    joinScreen.classList.add('hidden');
+    updateMembers([user]);
+    
+    lobbyScreen.classList.add('hidden');
     callScreen.classList.remove('hidden');
+    updateConnectionStatus('connected');
     
-    remoteNameDisplay.textContent = 'Ожидание...';
-    remoteAvatarLarge.textContent = '?';
-    remoteTile.classList.add('waiting');
-    
-    showNotification('Комната создана', 'success');
-    
-    if (localStream) {
-        setupVoiceActivityDetection(localStream);
-    }
+    showNotif(`Комната ${roomId} создана`, 'success');
 });
 
 socket.on('room-joined', ({ roomId, users, user }) => {
     currentRoom = roomId;
     currentUser = user;
     
-    roomIdDisplay.textContent = roomId;
-    localNameDisplay.textContent = user.username;
-    localAvatarLarge.textContent = getInitials(user.username);
+    callRoomCode.textContent = roomId;
+    currentUserAvatar.textContent = getInitials(user.username);
+    currentUserName.textContent = user.username;
     
-    joinScreen.classList.add('hidden');
-    callScreen.classList.remove('hidden');
+    updateMembers(users);
     
     const remoteUser = users.find(u => u.id !== socket.id);
     if (remoteUser) {
-        remoteNameDisplay.textContent = remoteUser.username;
-        remoteAvatarLarge.textContent = getInitials(remoteUser.username);
-        remoteTile.classList.remove('waiting');
-        updateRemoteConnectionStatus('connecting');
+        createVoicePeer(remoteUser.id, true);
     }
     
-    showNotification('Подключено к комнате', 'success');
+    lobbyScreen.classList.add('hidden');
+    callScreen.classList.remove('hidden');
     
-    if (localStream) {
-        setupVoiceActivityDetection(localStream);
-    }
-    
-    users.forEach(remoteUser => {
-        if (remoteUser.id !== socket.id) {
-            createPeerConnection(remoteUser.id, true);
-        }
-    });
+    showNotif('Подключено к комнате', 'success');
 });
 
 socket.on('user-connected', ({ user }) => {
-    remoteNameDisplay.textContent = user.username;
-    remoteAvatarLarge.textContent = getInitials(user.username);
-    remoteTile.classList.remove('waiting');
-    updateRemoteConnectionStatus('connecting');
+    const members = [];
+    document.querySelectorAll('.member-item').forEach(el => {
+        const id = el.id.replace('member-', '');
+        members.push({ id, username: 'temp' });
+    });
+    members.push(user);
+    updateMembers(members);
     
-    createPeerConnection(user.id, false);
-    showNotification(`${user.username} подключился`, 'success');
+    createVoicePeer(user.id, false);
+    showNotif(`${user.username} подключился`, 'success');
 });
 
 socket.on('user-speaking', ({ userId, isSpeaking }) => {
     updateSpeakingStatus(userId, isSpeaking);
 });
 
-socket.on('user-screen-sharing', ({ userId, isSharing }) => {
-    updateScreenShareStatus(userId, isSharing);
+socket.on('voice-offer', async ({ from, offer }) => {
+    const pc = createVoicePeer(from, false);
+    await pc.setRemoteDescription(new RTCSessionDescription(offer));
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    socket.emit('voice-answer', { to: from, answer: pc.localDescription });
 });
 
-socket.on('offer', async ({ from, offer }) => {
-    const peerConnection = createPeerConnection(from, false);
-    await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
-    
-    const answer = await peerConnection.createAnswer();
-    await peerConnection.setLocalDescription(answer);
-    
-    socket.emit('answer', {
-        to: from,
-        answer: peerConnection.localDescription
-    });
-});
-
-socket.on('answer', ({ from, answer }) => {
-    const peerConnection = peerConnections[from];
-    if (peerConnection) {
-        peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+socket.on('voice-answer', ({ from, answer }) => {
+    if (voicePeerConnection) {
+        voicePeerConnection.setRemoteDescription(new RTCSessionDescription(answer));
     }
 });
 
 socket.on('screen-offer', async ({ from, offer }) => {
-    const peerConnection = createScreenPeerConnection(from, false);
-    await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
-    
-    const answer = await peerConnection.createAnswer();
-    await peerConnection.setLocalDescription(answer);
-    
-    socket.emit('screen-answer', {
-        to: from,
-        answer: peerConnection.localDescription
-    });
+    const pc = createScreenPeer(from, false);
+    if (pc) {
+        await pc.setRemoteDescription(new RTCSessionDescription(offer));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        socket.emit('screen-answer', { to: from, answer: pc.localDescription });
+    }
 });
 
 socket.on('screen-answer', ({ from, answer }) => {
-    const peerConnection = screenPeerConnections[from];
-    if (peerConnection) {
-        peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+    if (screenPeerConnection) {
+        screenPeerConnection.setRemoteDescription(new RTCSessionDescription(answer));
     }
 });
 
 socket.on('ice-candidate', ({ from, candidate }) => {
-    if (peerConnections[from]) {
-        peerConnections[from].addIceCandidate(new RTCIceCandidate(candidate));
+    if (voicePeerConnection) {
+        voicePeerConnection.addIceCandidate(new RTCIceCandidate(candidate));
     }
-    if (screenPeerConnections[from]) {
-        screenPeerConnections[from].addIceCandidate(new RTCIceCandidate(candidate));
-    }
-});
-
-socket.on('room-full', () => {
-    showNotification('Комната уже заполнена (максимум 2 человека)', 'error');
-    if (localStream) {
-        localStream.getTracks().forEach(track => track.stop());
+    if (screenPeerConnection) {
+        screenPeerConnection.addIceCandidate(new RTCIceCandidate(candidate));
     }
 });
 
 socket.on('user-disconnected', ({ userId, username }) => {
-    if (peerConnections[userId]) {
-        peerConnections[userId].close();
-        delete peerConnections[userId];
-    }
+    const member = document.getElementById(`member-${userId}`);
+    if (member) member.remove();
     
-    if (screenPeerConnections[userId]) {
-        screenPeerConnections[userId].close();
-        delete screenPeerConnections[userId];
-    }
+    const tile = document.getElementById(`tile-${userId}`);
+    if (tile) tile.remove();
     
-    if (remoteAudioElements[userId]) {
-        remoteAudioElements[userId].remove();
-        delete remoteAudioElements[userId];
-    }
+    if (voicePeerConnection) voicePeerConnection.close();
+    if (screenPeerConnection) screenPeerConnection.close();
+    if (remoteAudioElement) remoteAudioElement.remove();
     
-    remoteNameDisplay.textContent = 'Ожидание...';
-    remoteAvatarLarge.textContent = '?';
-    remoteTile.classList.remove('speaking', 'screen-sharing', 'muted');
-    remoteTile.classList.add('waiting');
+    voicePeerConnection = null;
+    screenPeerConnection = null;
+    remoteAudioElement = null;
     
-    updateRemoteConnectionStatus('disconnected');
-    
-    if (!isScreenSharing) {
-        mainArea.classList.remove('screen-sharing-active');
-    }
-    screenShareContainer.classList.add('hidden');
-    remoteScreenVideo.srcObject = null;
-    
-    showNotification(`${username} покинул комнату`, 'info');
+    showNotif(`${username} покинул комнату`, 'info');
 });
 
 socket.on('room-not-found', () => {
-    showNotification('Комната не найдена', 'error');
-    if (localStream) {
-        localStream.getTracks().forEach(track => track.stop());
-    }
+    showNotif('Комната не найдена', 'error');
 });
 
-socket.on('connect_error', () => {
-    showNotification('Ошибка подключения к серверу', 'error');
-    connectionStatus.innerHTML = `
-        <div class="status-dot disconnected"></div>
-        <span>Отключено</span>
-    `;
+socket.on('room-full', () => {
+    showNotif('Комната заполнена', 'error');
 });
 
 socket.on('disconnect', () => {
-    connectionStatus.innerHTML = `
-        <div class="status-dot disconnected"></div>
-        <span>Отключено</span>
-    `;
-    showNotification('Потеряно соединение с сервером', 'error');
-    updateRemoteConnectionStatus('disconnected');
+    updateConnectionStatus('offline');
+    showNotif('Потеряно соединение', 'error');
 });
 
 socket.on('reconnect', () => {
-    connectionStatus.innerHTML = `
-        <div class="status-dot connected"></div>
-        <span>Подключено</span>
-    `;
-    showNotification('Соединение восстановлено', 'success');
+    updateConnectionStatus('connected');
+    showNotif('Соединение восстановлено', 'success');
 });
 
-console.log('Приложение загружено, код доступа:', ACCESS_CODE);
+console.log('✅ Приложение готово');
