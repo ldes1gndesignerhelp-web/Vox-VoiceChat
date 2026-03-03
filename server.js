@@ -35,7 +35,8 @@ io.on('connection', (socket) => {
             username: username,
             joinedAt: Date.now(),
             isSpeaking: false,
-            isScreenSharing: false
+            isScreenSharing: false,
+            connectionStatus: 'connected'
         };
         
         rooms.get(roomId).users.set(socket.id, userData);
@@ -66,7 +67,8 @@ io.on('connection', (socket) => {
                 username: username,
                 joinedAt: Date.now(),
                 isSpeaking: false,
-                isScreenSharing: false
+                isScreenSharing: false,
+                connectionStatus: 'connected'
             };
             
             room.users.set(socket.id, userData);

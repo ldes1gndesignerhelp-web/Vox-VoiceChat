@@ -1,7 +1,7 @@
 const socket = io();
 
 // Код доступа
-const ACCESS_CODE = 'hg-100UIRockaGaY-Alb1b3k-ZZZ_Govn0!';
+const ACCESS_CODE = 'hg-100UIRockaGaY';
 
 let localStream;
 let screenStream;
@@ -18,6 +18,8 @@ let animationFrame = null;
 let speakingTimeout = null;
 let remoteAudioElements = {};
 let remoteVolumes = {};
+let remoteConnectionStatus = 'disconnected';
+let connectionCheckInterval = null;
 
 // DOM элементы
 const accessScreen = document.getElementById('access-screen');
@@ -38,6 +40,7 @@ const leaveCallBtn = document.getElementById('leave-call');
 const notification = document.getElementById('notification');
 const notificationMessage = document.getElementById('notification-message');
 const connectionStatus = document.getElementById('connection-status');
+const mainArea = document.querySelector('.main-area');
 
 // Элементы для участников
 const localTile = document.getElementById('local-participant-tile');
@@ -46,15 +49,19 @@ const localAvatarLarge = document.getElementById('local-avatar-large');
 const remoteAvatarLarge = document.getElementById('remote-avatar-large');
 const localNameDisplay = document.getElementById('local-name-display');
 const remoteNameDisplay = document.getElementById('remote-name-display');
+const remoteConnectionStatusText = document.getElementById('remote-connection-status');
 const localMuteIcon = document.getElementById('local-mute-icon');
 const remoteMuteIcon = document.getElementById('remote-mute-icon');
 const localScreenIcon = document.getElementById('local-screen-icon');
 const remoteScreenIcon = document.getElementById('remote-screen-icon');
+const localConnection = document.getElementById('local-connection');
+const remoteConnection = document.getElementById('remote-connection');
 
 // Элементы для демонстрации экрана
 const screenShareContainer = document.getElementById('screen-share-container');
 const remoteScreenVideo = document.getElementById('remote-screen-video');
 const stopScreenShareBtn = document.getElementById('stop-screen-share');
+const fullscreenBtn = document.getElementById('fullscreen-screen');
 
 // Элементы контекстного меню
 const contextMenu = document.getElementById('context-menu');
@@ -169,6 +176,29 @@ function getInitials(username) {
     return username ? username.charAt(0).toUpperCase() : '?';
 }
 
+// Обновление статуса подключения
+function updateRemoteConnectionStatus(status) {
+    remoteConnectionStatus = status;
+    
+    const connectionDot = remoteConnection.querySelector('.connection-dot');
+    connectionDot.className = 'connection-dot';
+    
+    switch(status) {
+        case 'connected':
+            connectionDot.classList.add('connected');
+            remoteConnectionStatusText.textContent = 'В сети';
+            break;
+        case 'connecting':
+            connectionDot.classList.add('connecting');
+            remoteConnectionStatusText.textContent = 'Подключение...';
+            break;
+        case 'disconnected':
+            connectionDot.classList.add('disconnected');
+            remoteConnectionStatusText.textContent = 'Не в сети';
+            break;
+    }
+}
+
 // Обновление статусов
 function updateSpeakingStatus(userId, isSpeaking) {
     if (userId === socket.id) {
@@ -214,10 +244,12 @@ function updateScreenShareStatus(userId, isSharing) {
     } else {
         if (isSharing) {
             remoteTile.classList.add('screen-sharing');
+            mainArea.classList.add('screen-sharing-active');
         } else {
             remoteTile.classList.remove('screen-sharing');
-            screenShareContainer.classList.add('hidden');
-            remoteScreenVideo.srcObject = null;
+            if (!isScreenSharing) {
+                mainArea.classList.remove('screen-sharing-active');
+            }
         }
     }
 }
@@ -317,7 +349,10 @@ async function getLocalStream() {
 async function startScreenShare() {
     try {
         screenStream = await navigator.mediaDevices.getDisplayMedia({ 
-            video: true,
+            video: {
+                cursor: "always",
+                displaySurface: "monitor"
+            },
             audio: false
         });
         
@@ -328,6 +363,7 @@ async function startScreenShare() {
         // Создаем отдельное peer connection для экрана
         const remoteUserId = Object.keys(peerConnections)[0];
         if (remoteUserId) {
+            updateRemoteConnectionStatus('connecting');
             createScreenPeerConnection(remoteUserId, true);
         }
         
@@ -355,6 +391,10 @@ function stopScreenShare() {
     // Закрываем screen peer connections
     Object.values(screenPeerConnections).forEach(pc => pc.close());
     screenPeerConnections = {};
+    
+    if (!remoteTile.classList.contains('screen-sharing')) {
+        mainArea.classList.remove('screen-sharing-active');
+    }
     
     showNotification('Демонстрация экрана остановлена', 'info');
 }
@@ -384,20 +424,37 @@ function createScreenPeerConnection(targetUserId, isInitiator) {
         console.log('✅ Получен удаленный экран');
         remoteScreenVideo.srcObject = event.streams[0];
         screenShareContainer.classList.remove('hidden');
+        updateRemoteConnectionStatus('connected');
+        
+        remoteScreenVideo.onclick = () => {
+            if (screenShareContainer.requestFullscreen) {
+                screenShareContainer.requestFullscreen();
+            }
+        };
+    };
+    
+    peerConnection.onconnectionstatechange = () => {
+        console.log('Screen connection state:', peerConnection.connectionState);
+        if (peerConnection.connectionState === 'connected') {
+            updateRemoteConnectionStatus('connected');
+        } else if (peerConnection.connectionState === 'connecting') {
+            updateRemoteConnectionStatus('connecting');
+        } else if (peerConnection.connectionState === 'disconnected' || 
+                   peerConnection.connectionState === 'failed') {
+            updateRemoteConnectionStatus('disconnected');
+        }
     };
     
     if (isInitiator) {
-        setTimeout(() => {
-            peerConnection.createOffer()
-                .then(offer => peerConnection.setLocalDescription(offer))
-                .then(() => {
-                    socket.emit('screen-offer', {
-                        to: targetUserId,
-                        offer: peerConnection.localDescription
-                    });
-                })
-                .catch(error => console.error('Ошибка создания screen offer:', error));
-        }, 500);
+        peerConnection.createOffer()
+            .then(offer => peerConnection.setLocalDescription(offer))
+            .then(() => {
+                socket.emit('screen-offer', {
+                    to: targetUserId,
+                    offer: peerConnection.localDescription
+                });
+            })
+            .catch(error => console.error('Ошибка создания screen offer:', error));
     }
     
     return peerConnection;
@@ -460,19 +517,29 @@ function createPeerConnection(targetUserId, isInitiator) {
             audioElement.play().catch(e => console.log('Автовоспроизведение заблокировано:', e));
         }
     };
+    
+    peerConnection.onconnectionstatechange = () => {
+        console.log('Audio connection state:', peerConnection.connectionState);
+        if (peerConnection.connectionState === 'connected') {
+            updateRemoteConnectionStatus('connected');
+        } else if (peerConnection.connectionState === 'connecting') {
+            updateRemoteConnectionStatus('connecting');
+        } else if (peerConnection.connectionState === 'disconnected' || 
+                   peerConnection.connectionState === 'failed') {
+            updateRemoteConnectionStatus('disconnected');
+        }
+    };
 
     if (isInitiator) {
-        setTimeout(() => {
-            peerConnection.createOffer()
-                .then(offer => peerConnection.setLocalDescription(offer))
-                .then(() => {
-                    socket.emit('offer', {
-                        to: targetUserId,
-                        offer: peerConnection.localDescription
-                    });
-                })
-                .catch(error => console.error('Ошибка создания offer:', error));
-        }, 500);
+        peerConnection.createOffer()
+            .then(offer => peerConnection.setLocalDescription(offer))
+            .then(() => {
+                socket.emit('offer', {
+                    to: targetUserId,
+                    offer: peerConnection.localDescription
+                });
+            })
+            .catch(error => console.error('Ошибка создания offer:', error));
     }
 
     return peerConnection;
@@ -511,6 +578,7 @@ joinRoomBtn.addEventListener('click', async () => {
     if (hasAudio) {
         socket.emit('join-room', { roomId, username });
         showNotification('Подключение к комнате...', 'info');
+        updateRemoteConnectionStatus('connecting');
     }
 });
 
@@ -553,6 +621,19 @@ toggleScreenShareBtn.addEventListener('click', () => {
 });
 
 stopScreenShareBtn.addEventListener('click', stopScreenShare);
+
+fullscreenBtn.addEventListener('click', () => {
+    if (screenShareContainer.requestFullscreen) {
+        screenShareContainer.requestFullscreen();
+        screenShareContainer.classList.add('fullscreen');
+    }
+});
+
+document.addEventListener('fullscreenchange', () => {
+    if (!document.fullscreenElement) {
+        screenShareContainer.classList.remove('fullscreen');
+    }
+});
 
 copyRoomBtn.addEventListener('click', () => {
     navigator.clipboard.writeText(currentRoom);
@@ -602,16 +683,19 @@ leaveCallBtn.addEventListener('click', () => {
     
     remoteNameDisplay.textContent = 'Ожидание...';
     remoteAvatarLarge.textContent = '?';
-    remoteTile.classList.remove('speaking', 'waiting');
+    remoteTile.classList.remove('speaking', 'waiting', 'screen-sharing', 'muted');
     remoteTile.classList.add('waiting');
     localTile.classList.remove('speaking', 'muted', 'screen-sharing');
     
+    mainArea.classList.remove('screen-sharing-active');
     screenShareContainer.classList.add('hidden');
     remoteScreenVideo.srcObject = null;
     
     toggleAudioBtn.classList.remove('audio-off');
     toggleAudioBtn.classList.add('audio-on');
     toggleScreenShareBtn.classList.remove('screen-sharing');
+    
+    updateRemoteConnectionStatus('disconnected');
     
     callScreen.classList.add('hidden');
     joinScreen.classList.remove('hidden');
@@ -690,6 +774,7 @@ socket.on('room-joined', ({ roomId, users, user }) => {
         remoteNameDisplay.textContent = remoteUser.username;
         remoteAvatarLarge.textContent = getInitials(remoteUser.username);
         remoteTile.classList.remove('waiting');
+        updateRemoteConnectionStatus('connecting');
     }
     
     showNotification('Подключено к комнате', 'success');
@@ -709,6 +794,7 @@ socket.on('user-connected', ({ user }) => {
     remoteNameDisplay.textContent = user.username;
     remoteAvatarLarge.textContent = getInitials(user.username);
     remoteTile.classList.remove('waiting');
+    updateRemoteConnectionStatus('connecting');
     
     createPeerConnection(user.id, false);
     showNotification(`${user.username} подключился`, 'success');
@@ -796,9 +882,14 @@ socket.on('user-disconnected', ({ userId, username }) => {
     
     remoteNameDisplay.textContent = 'Ожидание...';
     remoteAvatarLarge.textContent = '?';
-    remoteTile.classList.remove('speaking', 'screen-sharing');
+    remoteTile.classList.remove('speaking', 'screen-sharing', 'muted');
     remoteTile.classList.add('waiting');
     
+    updateRemoteConnectionStatus('disconnected');
+    
+    if (!isScreenSharing) {
+        mainArea.classList.remove('screen-sharing-active');
+    }
     screenShareContainer.classList.add('hidden');
     remoteScreenVideo.srcObject = null;
     
@@ -815,17 +906,18 @@ socket.on('room-not-found', () => {
 socket.on('connect_error', () => {
     showNotification('Ошибка подключения к серверу', 'error');
     connectionStatus.innerHTML = `
-        <div class="status-dot" style="background: var(--accent-danger);"></div>
+        <div class="status-dot disconnected"></div>
         <span>Отключено</span>
     `;
 });
 
 socket.on('disconnect', () => {
     connectionStatus.innerHTML = `
-        <div class="status-dot" style="background: var(--accent-danger);"></div>
+        <div class="status-dot disconnected"></div>
         <span>Отключено</span>
     `;
     showNotification('Потеряно соединение с сервером', 'error');
+    updateRemoteConnectionStatus('disconnected');
 });
 
 socket.on('reconnect', () => {
